@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: vllm
-          image: docker.io/vllm/vllm-openai:v0.20.2-aarch64
+          image: docker.io/vllm/vllm-openai:v0.21.0-cu129
           command: ["vllm", "serve"]
           args:
             - "Qwen/Qwen2.5-7B-Instruct"
