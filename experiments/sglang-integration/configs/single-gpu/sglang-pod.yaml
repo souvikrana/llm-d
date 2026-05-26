@@ -21,15 +21,17 @@ spec:
     spec:
       containers:
         - name: sglang
-          image: docker.io/lmsysorg/sglang:v0.5.10.post1
+          image: docker.io/lmsysorg/sglang:v0.4.7-cu124
           command: ["python3", "-m", "sglang.launch_server"]
           args:
-            - "--model-path=Qwen/Qwen2.5-7B-Instruct"
-            - "--host=0.0.0.0"
-            - "--port=8000"
-            - "--enable-metrics"
-            - "--mem-fraction-static=0.90"
-            - "--chunked-prefill-size=8192"
+            - "--model-path"
+            - "Qwen/Qwen2.5-7B-Instruct"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--mem-fraction-static"
+            - "0.90"
           env:
             - name: HF_TOKEN
               valueFrom:
