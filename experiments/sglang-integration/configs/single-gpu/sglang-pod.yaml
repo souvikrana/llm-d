@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: sglang
-          image: docker.io/lmsysorg/sglang:v0.5.10.post1-cu125
+          image: docker.io/lmsysorg/sglang:v0.5.10.post1
           command: ["python3", "-m", "sglang.launch_server"]
           args:
             - "--model-path=Qwen/Qwen2.5-7B-Instruct"
