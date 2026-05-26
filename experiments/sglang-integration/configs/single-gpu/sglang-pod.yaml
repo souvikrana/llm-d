@@ -1,0 +1,100 @@
+# Single SGLang pod on GH200 — uses full 96GB VRAM
+# Qwen2.5-7B-Instruct leaves plenty of room for large KV cache
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sglang-exp1
+  namespace: llm-d-exp1
+  labels:
+    app: sglang-exp1
+    llm-d.ai/experiment: sglang-routing-gap
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sglang-exp1
+  template:
+    metadata:
+      labels:
+        app: sglang-exp1
+        llm-d.ai/experiment: sglang-routing-gap
+    spec:
+      containers:
+        - name: sglang
+          image: docker.io/lmsysorg/sglang:v0.5.10.post1-cu125
+          command: ["python3", "-m", "sglang.launch_server"]
+          args:
+            - "--model-path=Qwen/Qwen2.5-7B-Instruct"
+            - "--host=0.0.0.0"
+            - "--port=8000"
+            - "--enable-metrics"
+            - "--mem-fraction-static=0.90"
+            - "--chunked-prefill-size=8192"
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-d-hf-token
+                  key: HF_TOKEN
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              cpu: "16"
+              memory: 64Gi
+            requests:
+              nvidia.com/gpu: "1"
+              cpu: "4"
+              memory: 32Gi
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+            - mountPath: /.cache
+              name: hf-cache
+          startupProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 40
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Gi
+        - name: hf-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-exp1
+  namespace: llm-d-exp1
+spec:
+  type: ClusterIP
+  selector:
+    app: sglang-exp1
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

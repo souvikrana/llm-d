@@ -130,7 +130,7 @@ parallel as the next milestone. This gap justifies the engineering investment.
 
 Heuristic routing is substantially better than round-robin, but the gap to what
 precise routing could deliver is large. This typically happens at high QPS with a
-large prompt pool — the shadow tree drifts quickly as evictions happen.
+large prompt pool — the shadow tree drifts quickly as evictions happen.=
 
 **Decision:** KVEvents native publisher is critical path. Do not ship SGLang
 support without it — heuristic-only SGLang support would be a regression compared
