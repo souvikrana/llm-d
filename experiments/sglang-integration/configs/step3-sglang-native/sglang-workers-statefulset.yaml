@@ -1,0 +1,102 @@
+# SGLang workers as StatefulSet for stable DNS names
+# sgl-router needs predictable URLs to each worker
+apiVersion: v1
+kind: Service
+metadata:
+  name: exp1-sglang-native-decode
+  labels:
+    llm-d.ai/experiment: sglang-routing-gap
+    llm-d.ai/routing-config: sglang-native
+spec:
+  clusterIP: None  # Headless for StatefulSet DNS
+  selector:
+    app: sglang-native-worker
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: exp1-sglang-native-decode
+  labels:
+    llm-d.ai/experiment: sglang-routing-gap
+    llm-d.ai/routing-config: sglang-native
+spec:
+  serviceName: exp1-sglang-native-decode
+  replicas: 4
+  selector:
+    matchLabels:
+      app: sglang-native-worker
+  template:
+    metadata:
+      labels:
+        app: sglang-native-worker
+        llm-d.ai/experiment: sglang-routing-gap
+        llm-d.ai/routing-config: sglang-native
+    spec:
+      containers:
+        - name: modelserver
+          image: docker.io/lmsysorg/sglang:v0.5.10.post1
+          command: ["python3", "-m", "sglang.launch_server"]
+          args:
+            - "--model-path=Qwen/Qwen2.5-7B-Instruct"
+            - "--host=0.0.0.0"
+            - "--port=8000"
+            - "--enable-metrics"
+            - "--mem-fraction-static=0.90"
+            - "--chunked-prefill-size=8192"
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-d-hf-token
+                  key: HF_TOKEN
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              cpu: "8"
+              memory: 32Gi
+            requests:
+              nvidia.com/gpu: "1"
+              cpu: "2"
+              memory: 16Gi
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+            - mountPath: /.cache
+              name: hf-cache
+          startupProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+        - name: hf-cache
+          emptyDir: {}

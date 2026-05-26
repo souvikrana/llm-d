@@ -1,0 +1,17 @@
+# Simple ClusterIP service for round-robin load balancing (no EPP)
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-rr-service
+  labels:
+    llm-d.ai/experiment: sglang-routing-gap
+spec:
+  type: ClusterIP
+  selector:
+    llm-d.ai/experiment: sglang-routing-gap
+    llm-d.ai/routing-config: round-robin
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

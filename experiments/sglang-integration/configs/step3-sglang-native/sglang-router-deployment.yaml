@@ -1,0 +1,72 @@
+# SGLang native router (sgl-router) in cache-aware mode
+# This replaces the llm-d EPP — routes directly to SGLang workers
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: exp1-sglang-native-router
+  labels:
+    llm-d.ai/experiment: sglang-routing-gap
+    llm-d.ai/routing-config: sglang-native
+    app: sglang-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sglang-router
+  template:
+    metadata:
+      labels:
+        app: sglang-router
+        llm-d.ai/experiment: sglang-routing-gap
+        llm-d.ai/routing-config: sglang-native
+    spec:
+      containers:
+        - name: sgl-router
+          image: docker.io/lmsysorg/sglang:v0.5.10.post1
+          command: ["python3", "-m", "sglang_router.launch_router"]
+          args:
+            - "--host=0.0.0.0"
+            - "--port=8080"
+            - "--worker-urls"
+            - "http://exp1-sglang-native-decode-0.exp1-sglang-native-decode:8000,http://exp1-sglang-native-decode-1.exp1-sglang-native-decode:8000,http://exp1-sglang-native-decode-2.exp1-sglang-native-decode:8000,http://exp1-sglang-native-decode-3.exp1-sglang-native-decode:8000"
+            - "--policy=cache_aware"
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: exp1-sglang-native-router
+  labels:
+    llm-d.ai/experiment: sglang-routing-gap
+    llm-d.ai/routing-config: sglang-native
+spec:
+  type: ClusterIP
+  selector:
+    app: sglang-router
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

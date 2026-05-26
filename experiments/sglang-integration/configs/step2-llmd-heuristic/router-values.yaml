@@ -1,0 +1,40 @@
+## Experiment 1 Step 2: llm-d EPP with heuristic prefix-cache-scorer
+## Layer on top of: guides/recipes/router/base.values.yaml
+
+inferenceExtension:
+  replicas: 1
+
+  extraServicePorts:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 8081
+
+  pluginsConfigFile: "exp1-heuristic-plugins.yaml"
+  pluginsCustomConfig:
+    exp1-heuristic-plugins.yaml: |
+      apiVersion: inference.networking.x-k8s.io/v1alpha1
+      kind: EndpointPickerConfig
+      plugins:
+      - type: queue-scorer
+      - type: kv-cache-utilization-scorer
+      - type: prefix-cache-scorer
+      - type: no-hit-lru-scorer
+      schedulingProfiles:
+      - name: default
+        plugins:
+        - pluginRef: queue-scorer
+          weight: 2
+        - pluginRef: kv-cache-utilization-scorer
+          weight: 2
+        - pluginRef: prefix-cache-scorer
+          weight: 3
+        - pluginRef: no-hit-lru-scorer
+          weight: 2
+
+inferencePool:
+  modelServerProtocol: http
+  modelServers:
+    matchLabels:
+      llm-d.ai/experiment: sglang-routing-gap
+      llm-d.ai/routing-config: llmd-heuristic
