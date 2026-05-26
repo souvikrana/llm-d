@@ -100,30 +100,51 @@ async def scrape_pod(session: aiohttp.ClientSession, pod_address: str) -> PodMet
 
     metrics = parse_prometheus_metrics(text)
 
-    # SGLang metric names (may vary by version)
-    # Try multiple possible names
+    # Engine-agnostic: try SGLang metric names first, then vLLM names.
+    # SGLang exposes per-token counters; vLLM exposes per-query counters
+    # plus a hit_rate gauge — we compute hit rate from whichever pair is present.
+
+    # SGLang token-level counters (preferred — most precise)
     cache_hit = (
         metrics.get("sglang_cache_hit_tokens_total", 0)
         or metrics.get("sglang:cache_hit_tokens_total", 0)
         or metrics.get("cache_hit_tokens_total", 0)
-        or metrics.get("sglang_token_usage_total", 0)  # fallback
+        # vLLM query/block-level counters
+        or metrics.get("vllm:gpu_prefix_cache_hits_total", 0)
+        or metrics.get("vllm:gpu_prefix_cache_hit_tokens", 0)
     )
     cache_miss = (
         metrics.get("sglang_cache_miss_tokens_total", 0)
         or metrics.get("sglang:cache_miss_tokens_total", 0)
         or metrics.get("cache_miss_tokens_total", 0)
+        # vLLM doesn't expose misses directly; compute from queries - hits
     )
+
+    # vLLM exposes total queries, so derive miss count if we have it
+    if cache_miss == 0 and cache_hit > 0:
+        vllm_queries = (
+            metrics.get("vllm:gpu_prefix_cache_queries_total", 0)
+            or metrics.get("vllm:gpu_prefix_cache_query_tokens", 0)
+        )
+        if vllm_queries > 0:
+            cache_miss = max(0, vllm_queries - cache_hit)
 
     total = cache_hit + cache_miss
     hit_rate = cache_hit / total if total > 0 else 0.0
 
+    # Fallback: vLLM also exposes a precomputed hit_rate gauge
+    if hit_rate == 0:
+        hit_rate = metrics.get("vllm:gpu_prefix_cache_hit_rate", 0)
+
     running = (
         metrics.get("sglang_running_requests", 0)
         or metrics.get("sglang:running_requests", 0)
+        or metrics.get("vllm:num_requests_running", 0)
     )
     waiting = (
         metrics.get("sglang_waiting_requests", 0)
         or metrics.get("sglang:waiting_requests", 0)
+        or metrics.get("vllm:num_requests_waiting", 0)
     )
 
     return PodMetrics(

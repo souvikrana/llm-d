@@ -1,0 +1,105 @@
+# Phase 1 — Single vLLM pod on full GH200 (96GB)
+# Uses arm64-compatible vLLM build that works with driver 570 / CUDA 12.8
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-exp2
+  namespace: llm-d-exp1
+  labels:
+    app: vllm-exp2
+    llm-d.ai/experiment: vllm-baseline
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-exp2
+  template:
+    metadata:
+      labels:
+        app: vllm-exp2
+        llm-d.ai/experiment: vllm-baseline
+    spec:
+      containers:
+        - name: vllm
+          image: docker.io/vllm/vllm-openai:v0.20.2-aarch64
+          command: ["vllm", "serve"]
+          args:
+            - "Qwen/Qwen2.5-7B-Instruct"
+            - "--host=0.0.0.0"
+            - "--port=8000"
+            - "--enable-prefix-caching"
+            - "--block-size=16"
+            - "--gpu-memory-utilization=0.90"
+            - "--disable-log-requests"
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-d-hf-token
+                  key: HF_TOKEN
+            - name: VLLM_LOGGING_LEVEL
+              value: "INFO"
+            - name: DO_NOT_TRACK
+              value: "1"
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              cpu: "16"
+              memory: 64Gi
+            requests:
+              nvidia.com/gpu: "1"
+              cpu: "4"
+              memory: 32Gi
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+            - mountPath: /root/.cache
+              name: hf-cache
+          startupProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 60  # ~15 min for first model download
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Gi
+        - name: hf-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-exp2
+  namespace: llm-d-exp1
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-exp2
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
