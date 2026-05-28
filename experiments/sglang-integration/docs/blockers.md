@@ -1,48 +1,48 @@
 # Experiment Blockers
 
-## Blocker — GH200 / arm64 + driver 570 / CUDA 12.8
+## Blocker — GH200 / arm64 + driver 570 / CUDA 12.8 [RESOLVED]
 
 **Date discovered:** 2026-05-26
+**Date resolved:** 2026-05-28
 **Hardware:** NVIDIA GH200 480GB (Grace ARM64 + Hopper GPU)
-**Driver version:** 570.211.01 (supports CUDA ≤ 12.8)
 
 ### Summary
 
-We cannot run any official inference engine container (SGLang or vLLM) on this
-hardware without upgrading the driver. The published Docker images for both
-engines assume either:
+We could not run any official inference engine container (SGLang or vLLM) on
+this hardware with the original driver. The published Docker images for both
+engines for arm64 require CUDA ≥ 12.9, which needs driver 575+.
 
-- **arm64 build with CUDA ≥ 12.9** — requires driver 575+, which we don't have
-- **older CUDA build (≤ 12.8) but amd64-only** — won't run on Grace ARM64 CPU
+### Resolution
 
-### Compatibility matrix
+Upgraded the NVIDIA driver from 570.211 to 580.159 (open kernel module variant
+required for self-hosted GH200). All current cu129+ arm64 images now run.
 
-| Engine | arm64 + CUDA ≤ 12.8? | arm64 + CUDA 12.9+? | amd64 + CUDA ≤ 12.8? |
-|--------|----------------------|---------------------|----------------------|
-| SGLang `lmsysorg/sglang` | **No** (none published) | yes (`v0.5.10.post1-cu129` etc.) | yes (older versions) |
-| vLLM `vllm/vllm-openai` | **No** (none published) | yes (`v0.20.2-aarch64`, `v0.21.0-cu129`) | yes (`v0.7.x`, `v0.20.x`) |
+### Compatibility matrix (final)
 
-The intersection of `arm64-built` and `CUDA ≤ 12.8` is **empty across both
-projects**.
+| Engine | Working tag | Notes |
+|--------|-------------|-------|
+| SGLang `lmsysorg/sglang` | `v0.5.10.post1-cu129` | arm64 + cu129, works with driver 580 |
+| vLLM `vllm/vllm-openai` | `v0.21.0-cu129` | arm64 + cu129, works with driver 580 |
 
-### Errors observed
+### Operational notes
 
-- **SGLang `v0.5.10.post1` (cu129 amd64):** `Error 802: system not yet initialized` — driver 570 doesn't support CUDA 12.9 runtime
-- **SGLang `v0.4.7-cu124`:** `exec /usr/bin/python3: exec format error` — image is amd64-only, host CPU is arm64
-- **vLLM `v0.20.2-aarch64`:** `No CUDA runtime is found` + `Failed to infer device type` — image's CUDA runtime is newer than driver supports
+- The GH200 requires the **NVIDIA open kernel modules**. The standard
+  `nvidia-driver-575` package installs closed modules and silently fails with
+  "self-hosted GPU requires open kernel modules" in dmesg.
+  Use `nvidia-driver-580-open` (or `nvidia-open-580`) instead.
+- After driver upgrade, the containerd config at
+  `/etc/containerd/conf.d/99-nvidia.toml` must be regenerated:
+  ```
+  sudo nvidia-ctk runtime configure --runtime=containerd --config=/etc/containerd/config.toml
+  sudo sed -i 's/default_runtime_name = "runc"/default_runtime_name = "nvidia"/' /etc/containerd/conf.d/99-nvidia.toml
+  sudo systemctl restart containerd
+  ```
+- MIG is enabled on this host (7× 1g.12gb slices). The default NVIDIA k8s
+  device plugin does not handle MIG out of the box — use the MIG-aware manifest
+  at `configs/cluster-setup/nvidia-device-plugin-mig.yaml` (sets
+  `migStrategy: mixed` and `privileged: true` for memory introspection).
 
-### Resolution paths
+### Hardware constraints that remain
 
-1. **Upgrade driver to ≥ 575 (recommended).** Unblocks all current arm64 builds (`v0.5.10.post1-cu129`, `vllm:v0.21.0-cu129` etc.). Requires `sudo apt install nvidia-driver-575` + reboot.
-2. **Build vLLM or SGLang from source for arm64 + CUDA 12.8.** Feasible but ~1 day of build time on the host.
-3. **Run on different hardware.** Any x86_64 host with H100/A100 and a recent driver works with all published tags.
-
-### Decision pending
-
-Need explicit user decision on whether to:
-- (a) upgrade the driver and continue
-- (b) request a different host
-- (c) accept the build-from-source delay
-
-Until then, all benchmark experiments on this hardware are blocked at the
-container-startup stage.
+- **One physical GPU** (1× GH200) — partitioned via MIG into 7× 1g.12gb slices
+- **Each MIG slice is 12GB** — fits Qwen2.5-1.5B comfortably; Qwen2.5-7B needs the full GPU (MIG must be disabled for that path)
