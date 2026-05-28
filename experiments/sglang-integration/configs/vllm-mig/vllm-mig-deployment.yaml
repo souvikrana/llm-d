@@ -1,0 +1,124 @@
+# 4 vLLM pods, each on a separate MIG 1g.12gb slice
+# Model: Qwen/Qwen2.5-1.5B-Instruct (~3GB weights, fits with room for KV cache)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-mig
+  namespace: llm-d-exp1
+  labels:
+    app: vllm-mig
+    llm-d.ai/experiment: vllm-mig-routing
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: vllm-mig
+  template:
+    metadata:
+      labels:
+        app: vllm-mig
+        llm-d.ai/experiment: vllm-mig-routing
+    spec:
+      affinity:
+        # Spread pods across different MIG slices on the same node
+        # (only one node here, so this is best-effort)
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: vllm-mig
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: vllm
+          image: docker.io/vllm/vllm-openai:v0.21.0-cu129
+          command: ["vllm", "serve"]
+          args:
+            - "Qwen/Qwen2.5-1.5B-Instruct"
+            - "--host=0.0.0.0"
+            - "--port=8000"
+            - "--enable-prefix-caching"
+            - "--block-size=16"
+            - "--gpu-memory-utilization=0.85"
+            - "--max-model-len=4096"
+            - "--disable-log-requests"
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-d-hf-token
+                  key: HF_TOKEN
+            - name: VLLM_LOGGING_LEVEL
+              value: "INFO"
+            - name: DO_NOT_TRACK
+              value: "1"
+            # Each pod sees its own MIG slice as device 0
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          resources:
+            limits:
+              nvidia.com/mig-1g.12gb: "1"
+              cpu: "8"
+              memory: 16Gi
+            requests:
+              nvidia.com/mig-1g.12gb: "1"
+              cpu: "2"
+              memory: 8Gi
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+            - mountPath: /root/.cache
+              name: hf-cache
+          startupProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+        - name: hf-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-mig
+  namespace: llm-d-exp1
+  labels:
+    app: vllm-mig
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-mig
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
