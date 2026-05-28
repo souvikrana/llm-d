@@ -1,48 +1,44 @@
 # Experiment Blockers
 
-## Blocker — GH200 / arm64 + driver 570 / CUDA 12.8 [RESOLVED]
+## Blocker 1 — GH200 / arm64 + driver 570 / CUDA 12.8 [RESOLVED]
 
-**Date discovered:** 2026-05-26
-**Date resolved:** 2026-05-28
-**Hardware:** NVIDIA GH200 480GB (Grace ARM64 + Hopper GPU)
+**Resolution:** Upgraded the NVIDIA driver to 580.159.04 (open kernel module
+variant required for self-hosted GH200). All cu129+ arm64 images now run on
+this driver.
 
-### Summary
+## Blocker 2 — Official vLLM arm64 images broken on GH200 [WORKAROUND]
 
-We could not run any official inference engine container (SGLang or vLLM) on
-this hardware with the original driver. The published Docker images for both
-engines for arm64 require CUDA ≥ 12.9, which needs driver 575+.
+**Date discovered:** 2026-05-28
+**Symptom:** `torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are
+busy or unavailable` on `cudaMemGetInfo` during EngineCore init, even with
+driver 580 + working `nvidia-smi` inside the same container image.
 
-### Resolution
+**Root cause:** The upstream `vllm/vllm-openai` aarch64 Docker images are not
+built correctly for Grace Hopper. The CUDA libraries shipped in the image
+mismatch the host driver in subtle ways (LD_LIBRARY_PATH conflicts, missing
+SBSA-specific kernels). Confirmed via [vllm issue #10459](https://github.com/vllm-project/vllm/issues/10459).
 
-Upgraded the NVIDIA driver from 570.211 to 580.159 (open kernel module variant
-required for self-hosted GH200). All current cu129+ arm64 images now run.
+**Workaround:** Use a community-maintained GH200-specific build:
 
-### Compatibility matrix (final)
+| Image | Version | Notes |
+|-------|---------|-------|
+| `rajesh550/gh200-vllm:0.11.0` | vLLM 0.11.0 (Aug 2025) | **Recommended.** Latest, arm64 + GH200-tested. Earlier versions also include LMCache 0.3.0. |
+| `substratusai/vllm-gh200:v0.8.2` | vLLM 0.8.2 | Older but well-tested. |
+| `LambdaLabsML/vllm-builder` | various | Official LambdaLabs builds. |
 
-| Engine | Working tag | Notes |
-|--------|-------------|-------|
-| SGLang `lmsysorg/sglang` | `v0.5.10.post1-cu129` | arm64 + cu129, works with driver 580 |
-| vLLM `vllm/vllm-openai` | `v0.21.0-cu129` | arm64 + cu129, works with driver 580 |
+All require `VLLM_WORKER_MULTIPROC_METHOD=spawn` env var.
 
-### Operational notes
+**Long-term fix:** Wait for upstream vLLM to fix aarch64 Docker support.
 
-- The GH200 requires the **NVIDIA open kernel modules**. The standard
-  `nvidia-driver-575` package installs closed modules and silently fails with
-  "self-hosted GPU requires open kernel modules" in dmesg.
-  Use `nvidia-driver-580-open` (or `nvidia-open-580`) instead.
-- After driver upgrade, the containerd config at
-  `/etc/containerd/conf.d/99-nvidia.toml` must be regenerated:
+## Operational notes
+
+- The GH200 requires the **NVIDIA open kernel modules** (use `nvidia-driver-580-open`, not `nvidia-driver-580`).
+- After driver upgrade, regenerate the containerd CDI/runtime config:
   ```
   sudo nvidia-ctk runtime configure --runtime=containerd --config=/etc/containerd/config.toml
   sudo sed -i 's/default_runtime_name = "runc"/default_runtime_name = "nvidia"/' /etc/containerd/conf.d/99-nvidia.toml
   sudo systemctl restart containerd
+  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
   ```
-- MIG is enabled on this host (7× 1g.12gb slices). The default NVIDIA k8s
-  device plugin does not handle MIG out of the box — use the MIG-aware manifest
-  at `configs/cluster-setup/nvidia-device-plugin-mig.yaml` (sets
-  `migStrategy: mixed` and `privileged: true` for memory introspection).
-
-### Hardware constraints that remain
-
-- **One physical GPU** (1× GH200) — partitioned via MIG into 7× 1g.12gb slices
-- **Each MIG slice is 12GB** — fits Qwen2.5-1.5B comfortably; Qwen2.5-7B needs the full GPU (MIG must be disabled for that path)
+- The NVIDIA k8s device plugin needs explicit `migStrategy: none` (or `mixed` if MIG is enabled). Default `auto` reports 0 allocatable GPUs.
+- MIG `1g.12gb` slices break vLLM's `cudaMemGetInfo` even on community-built GH200 images. For multi-pod experiments use larger MIG profiles (`3g.48gb`) or run multiple pods sharing the full GPU via process-level partitioning (out of scope for this experiment phase).
