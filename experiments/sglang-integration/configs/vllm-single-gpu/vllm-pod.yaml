@@ -30,15 +30,13 @@ spec:
             - "--enable-prefix-caching"
             - "--block-size=16"
             - "--gpu-memory-utilization=0.90"
-            - "--disable-log-requests"
+            - "--max-model-len=8192"
           env:
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: llm-d-hf-token
                   key: HF_TOKEN
-            - name: VLLM_LOGGING_LEVEL
-              value: "INFO"
             - name: DO_NOT_TRACK
               value: "1"
           ports:
