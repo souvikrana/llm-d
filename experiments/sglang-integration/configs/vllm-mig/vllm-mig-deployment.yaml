@@ -42,6 +42,8 @@ spec:
             - "--block-size=16"
             - "--gpu-memory-utilization=0.85"
             - "--max-model-len=4096"
+            - "--enforce-eager"
+            - "--swap-space=0"
           env:
             - name: HF_TOKEN
               valueFrom:
@@ -52,6 +54,11 @@ spec:
               value: "INFO"
             - name: DO_NOT_TRACK
               value: "1"
+            # MIG-specific: avoid cudaMemGetInfo on parent device
+            - name: VLLM_WORKER_MULTIPROC_METHOD
+              value: "spawn"
+            - name: PYTORCH_CUDA_ALLOC_CONF
+              value: "expandable_segments:True"
             # Each pod sees its own MIG slice as device 0
             - name: POD_NAME
               valueFrom:
